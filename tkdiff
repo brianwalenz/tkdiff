@@ -42,7 +42,7 @@ wm withdraw .
 
 # set a couple o' globals that we might need sooner than later
 set g(name) "TkDiff"
-set g(version) "4.2"
+set g(version) "4.3"
 set g(started) 0
 
 # FIXME - move to preferences
@@ -205,13 +205,15 @@ array set finfo {
     pth,2        ""
     revs,1       ""
     revs,2       ""
-    lbl,1        ""
-    lbl,2        ""
+    lbl,1        "label_of_file_1"
+    lbl,2        "label_of_file_2"
     userlbl,1    ""
     userlbl,2    ""
     title        {}
     tmp,1        0
     tmp,2        0
+    fpairs       0
+    fpairnum     1
 }
 set uniq 0
 
@@ -422,7 +424,7 @@ proc run-command {cmd} {
 
     set stderr ""
     set exitcode 0
-    set errfile [tmpfile "r"]
+    set errfile [tmpfile "run-command-errfile"]
     debug-info "$cmd"
     set failed [catch "$cmd \"2>$errfile\"" stdout]
     # Read stderr output
@@ -727,6 +729,7 @@ proc split-conflictfile {name} {
     return "{$temp1} {$temp2} {$firstname} {$secondname}"
 }
 
+
 ###############################################################################
 # Get a revision of a file
 #   f            file name
@@ -808,8 +811,7 @@ proc get-file-rev {f index {r ""}} {
         }
         # Won't work if you aren't actually in the work tree
         debug-info "exec $cmd rev-parse --is-inside-work-tree"
-        if {[catch {eval "exec $cmd rev-parse --is-inside-work-tree"} err] } {
-           puts stderr "$err"
+        if {![is-in-git-repository]} {
            puts stderr "Please start in a git work tree."
            exit 1
         }
@@ -956,6 +958,11 @@ proc get-file-rev {f index {r ""}} {
     }
 }
 
+proc is-in-git-repository {} {
+    debug-info "is-in-git-repository"
+    return [expr [catch {eval "exec git rev-parse --is-inside-work-tree"} err] == 0]
+}
+
 proc is-mercurial-repository {dirname} {
     debug-info "is-mercurial-repository ($dirname)"
     # check for a .hg directory in all parent directories
@@ -1011,6 +1018,7 @@ proc get-file {f index} {
     }
     set finfo(pth,$index) "$f"
     set finfo(tmp,$index) 0
+
     return 0
 }
 
@@ -1107,7 +1115,9 @@ proc commandline {} {
     # Now check how many revision and file args we have.
     #debug-info " $pths files, $revs revisions"
     # Maybe adjustment is needed
-    if {$revs == 1 && $pths == 0} {
+    if {[is-in-git-repository]} {
+       # skip checking for git arguments
+    } elseif {$revs == 1 && $pths == 0} {
        # tkdiff -r FILE; same as tkdiff FILE
        set finfo(pths,1) $finfo(revs,1)
        set finfo(f,1) $finfo(revs,1)
@@ -1122,9 +1132,19 @@ proc commandline {} {
        incr revs -1
        unset finfo(revs,2)
     }
-    # What have we got now?
-    debug-info " $pths files, $revs revisions"
-    if {$revs == 0 && $pths == 0} {
+    # More command line error checking.
+    debug-info " $pths files, $revs revisions git:[is-in-git-repository]"
+    if {[is-in-git-repository]} {
+        if {$revs > 2} {
+            puts stderr "Error: in git, specify at most 2 revisions"
+            do-usage cline
+            exit 1
+        } elseif {$revs == 2 && $pths > 0} {
+            puts stderr "Error: in git, if specifying paths, then don't add file(s)"
+            do-usage cline
+            exit 1
+        }
+    } elseif {$revs == 0 && $pths == 0} {
         # Return "empty" flag, and we'll do a pop-up
         return 1
     } elseif {$revs > 1 && $pths != 1} {
@@ -1171,10 +1191,13 @@ proc assemble-args {} {
     }
 
     debug-info " $pths files, $revs revisions"
-    if {$revs == 0 && $pths == 0} {
+    if {[assemble-git-args $revs $pths]} {
+        # git diffs are more involved to fetch, call another function.
+
+    } elseif {$revs == 0 && $pths == 0} {
         return
-    }
-    if {$g(conflictset)} {
+
+    } elseif {$g(conflictset)} {
         if {$revs == 0 && $pths == 1} {
             ############################################################
             # tkdiff -conflict FILE
@@ -1273,6 +1296,83 @@ proc assemble-args {} {
 
     wm title . "$finfo(title) - $g(name) $g(version)"
     return 0
+}
+
+###############################################################################
+# Process git argument(s)
+###############################################################################
+proc assemble-git-args {revs pths} {
+    debug-info "assemble-git-args"
+    global finfo
+    global opts
+
+    # git diff requires 1-2 branch names (hash, HEAD, etc...)
+    if {$pths >= 1 && ![file exists $finfo(pth,1)]} {
+        set path(1) $finfo(pth,1)
+      if [info exists finfo(pth,2)] {
+          set path(2) $finfo(pth,2)
+      } else {
+          set path(2) ""
+      }
+    } elseif {$revs == 0} {
+        set path(1) "HEAD"
+        set path(2) ""
+    } elseif {$revs == 1} {
+        set path(1) $finfo(revs,1)
+        set path(2) ""
+    } elseif {$revs == 2} {
+        set path(1) $finfo(revs,1)
+        set path(2) $finfo(revs,2)
+    } else {
+        return f
+    }
+
+    # fetch git files that are different
+    set git_result [run-command "exec git diff --name-only $path(1) $path(2)"]
+    set git_stdout [lindex $git_result 0]
+    set git_exitcode [lindex $git_result 2]
+    if {$git_exitcode != 0 || $git_stdout == ""} {
+        return f
+    }
+
+    set git_root [exec git rev-parse --show-toplevel]
+    set file_idx 0
+    set finfo(fpairs) 0
+    foreach file [split $git_stdout "\n"] {
+        foreach path_idx {1 2} {
+            incr file_idx
+            set tmp_file [tmpfile "tkdiff__[file tail $file]"]
+            if {$path($path_idx) == ""} {
+                set git_result \
+                    [run-command "exec cat $git_root/$file > $tmp_file"]
+            } else {
+                set git_result \
+                    [run-command "exec git show $path($path_idx):$file > $tmp_file"]
+            }
+            set git_stderr [lindex $git_result 1]
+            set git_exitcode [lindex $git_result 2]
+            if {$git_exitcode != 0} {
+                if [string match "*exists on disk*" $git_stderr] {
+                    # do nothing, get an empty file
+                } elseif [string match "*Invalid object name*" $git_stderr] {
+                    return f
+                } else {
+                    debug-info "Unable to perform 'git show $path($path_idx):$file' ($git_stderr)"
+                }
+            }
+            # preset multi-file label
+            set finfo(multilbl,$file_idx) "$path($path_idx):$file"
+            set finfo(pth,$file_idx) $tmp_file
+            set finfo(userlbl,$file_idx) ""
+            set finfo(tmp,$file_idx) 1
+
+            if {$file_idx == 1 || $file_idx == 2} {
+                set finfo(lbl,$file_idx) $finfo(multilbl,$file_idx)
+            }
+        }
+        incr finfo(fpairs)
+    }
+    return t
 }
 
 ###############################################################################
@@ -1446,6 +1546,54 @@ proc build-popupMenu {} {
     $m add separator
     $m add command -label "Find..." -underline 0 -command [list popupMenu find]
     $m add command -label "Edit" -underline 0 -command [list popupMenu edit]
+}
+
+###############################################################################
+# Load prev/next file in a multi-file diff
+###############################################################################
+proc multiFileListMenu {command index} {
+    global w
+    global opts
+    global finfo
+
+    debug-info "multiFileListMenu ($command) $finfo(fpairnum) $finfo(fpairs)"
+
+    if {$finfo(fpairs) <= 1} {return}
+
+    set label_index [expr $finfo(fpairnum) * 2 - 1]
+    set label [file tail $finfo(multilbl,$label_index)]
+    $w(multiFileListMenu) entryconfigure "$label" -state normal
+
+    set redisplay f
+    switch -- $command {
+    prev {
+        if {$finfo(fpairnum) > 1} {
+            incr finfo(fpairnum) -1
+            set redisplay t
+        }
+    }
+    next {
+        if {$finfo(fpairnum) < $finfo(fpairs)} {
+            incr finfo(fpairnum)
+            set redisplay t
+        }
+    }
+    jump {
+        set finfo(fpairnum) $index
+        set redisplay t
+    }
+    }
+
+    set label_index [expr $finfo(fpairnum) * 2 - 1]
+    set label [file tail $finfo(multilbl,$label_index)]
+    $w(multiFileListMenu) entryconfigure $label -state disabled
+
+    if {$redisplay} {
+        set label_index2 [expr $label_index + 1]
+        set finfo(lbl,1) $finfo(multilbl,$label_index)
+        set finfo(lbl,2) $finfo(multilbl,$label_index2)
+        recompute-diff
+    }
 }
 
 ###############################################################################
@@ -2184,6 +2332,7 @@ proc build-menubar {} {
     debug-info "build-menubar ()"
     global g
     global opts
+    global finfo
     global w
 
     menu $w(menubar)
@@ -2198,6 +2347,7 @@ proc build-menubar {} {
     set helpMenu $w(menubar).help
     set editMenu $w(menubar).edit
     set mergeMenu $w(menubar).window
+    set multiFileListMenu $w(menubar).multiFileList
     set markMenu $w(menubar).marks
 
     $w(menubar) add cascade -label "File" -menu $fileMenu -underline 0
@@ -2205,6 +2355,10 @@ proc build-menubar {} {
     $w(menubar) add cascade -label "View" -menu $viewMenu -underline 0
     $w(menubar) add cascade -label "Mark" -menu $markMenu -underline 3
     $w(menubar) add cascade -label "Merge" -menu $mergeMenu -underline 0
+    if {$finfo(fpairs) > 1} {
+        $w(menubar) add cascade -label "File List" \
+            -menu $multiFileListMenu -underline 5
+    }
     $w(menubar) add cascade -label "Help" -menu $helpMenu -underline 0
 
     # these, however, are used in other places..
@@ -2213,6 +2367,7 @@ proc build-menubar {} {
     set w(helpMenu) $helpMenu
     set w(editMenu) $editMenu
     set w(mergeMenu) $mergeMenu
+    set w(multiFileListMenu) $multiFileListMenu
     set w(markMenu) $markMenu
 
     # Now, the menus...
@@ -2362,6 +2517,25 @@ proc build-menubar {} {
        merge results"
     set "g(tooltip,Write Merge File)" "Write the merge file to disk. You will \
        be prompted for a filename"
+
+    # Multiple file list menu.
+    menu $multiFileListMenu
+    $multiFileListMenu add command -label "Previous File" -underline 1 \
+        -accelerator "j" -command [list multiFileListMenu prev 0]
+    $multiFileListMenu add command -label "Next File" -underline 1 \
+        -accelerator "k" -command [list multiFileListMenu next 0]
+    $multiFileListMenu add separator
+    for {set i 1} {$i <= $finfo(fpairs)} {incr i} {
+        set fileindex [expr $i * 2 - 1]
+        set label [file tail $finfo(multilbl,$fileindex)]
+        $multiFileListMenu add command \
+            -label $label \
+            -accelerator $i \
+            -command [list multiFileListMenu jump $i]
+        if {$i == 1} {
+            $multiFileListMenu entryconfigure $label -state disabled
+        }
+    }
 
     # Help menu. If you change, add or remove labels, be sure and
     # update the tooltips.
@@ -2929,6 +3103,22 @@ proc common-navigation {args} {
             move last
             break
         "
+        bind $widget <j> {
+            multiFileListMenu next 0
+            break
+        }
+        bind $widget <bracketright> {
+            multiFileListMenu next 0
+            break
+        }
+        bind $widget <k> {
+            multiFileListMenu prev 0
+            break
+        }
+        bind $widget <bracketleft> {
+            multiFileListMenu prev 0
+            break
+        }
         bind $widget <q> "
             do-exit
             break
@@ -5221,8 +5411,10 @@ proc rediff {} {
     buttons disabled
 
     # Read the files into their respective widgets & add line numbers.
-    foreach mod {1 2} {
-        if {$mod == 1} {
+    set i [expr $finfo(fpairnum) * 2 - 1]
+    set j [expr $i + 1]
+    foreach mod [list $i $j] {
+        if {$mod % 2 == 1} {
             set text $w(LeftText)
         } else {
             set text $w(RightText)
@@ -5237,10 +5429,10 @@ proc rediff {} {
 
     # Diff the two files and store the summary lines into 'g(diff)'.
     if {$opts(ignoreblanks) == 1} {
-        set diffcmd "$opts(diffcmd) $opts(ignoreblanksopt)  {$finfo(pth,1)} \
-          {$finfo(pth,2)}"
+        set diffcmd "$opts(diffcmd) $opts(ignoreblanksopt)  {$finfo(pth,$i)} \
+          {$finfo(pth,$j)}"
     } else {
-        set diffcmd "$opts(diffcmd) {$finfo(pth,1)} {$finfo(pth,2)}"
+        set diffcmd "$opts(diffcmd) {$finfo(pth,$i)} {$finfo(pth,$j)}"
     }
     show-info "Executing \"$diffcmd\""
 
@@ -5280,9 +5472,9 @@ proc rediff {} {
         # 3-way merge - compare 1st file (left: diff3l) with ancestor
         if {$opts(ignoreblanks) == 1} {
             set diffcmd "$opts(diffcmd) $opts(ignoreblanksopt) \
-              {$finfo(pth,1)} {$g(ancfile)}"
+              {$finfo(pth,$i)} {$g(ancfile)}"
         } else {
-            set diffcmd "$opts(diffcmd) {$finfo(pth,1)} {$g(ancfile)}"
+            set diffcmd "$opts(diffcmd) {$finfo(pth,$i)} {$g(ancfile)}"
         }
         show-info "Executing \"$diffcmd\""
         set result [run-command "exec $diffcmd"]
@@ -5313,9 +5505,9 @@ proc rediff {} {
         # 3-way merge - compare 2nd file (right: diff3r) with ancestor
         if {$opts(ignoreblanks) == 1} {
             set diffcmd "$opts(diffcmd) $opts(ignoreblanksopt) \
-              {$finfo(pth,2)} {$g(ancfile)}"
+              {$finfo(pth,$j)} {$g(ancfile)}"
         } else {
-            set diffcmd "$opts(diffcmd) {$finfo(pth,2)} {$g(ancfile)}"
+            set diffcmd "$opts(diffcmd) {$finfo(pth,$j)} {$g(ancfile)}"
         }
         show-info "Executing \"$diffcmd\""
         set result [run-command "exec $diffcmd"]
