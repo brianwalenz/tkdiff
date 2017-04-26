@@ -5086,8 +5086,7 @@ proc do-new-diff {} {
     set finfo(tmp,1) 0
     set finfo(tmp,2) 0
 
-    #foreach inf [lsort [array names finfo]] { debug-info "    $inf: \
-      $finfo($inf)" }
+    #foreach inf [lsort [array names finfo]] { debug-info "    $inf: $finfo($inf)" }
     # Pop up the dialog to collect the args
     newDiffDialog
 
