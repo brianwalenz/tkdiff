@@ -801,17 +801,10 @@ proc get-file-rev {f index {r ""}} {
             set finfo(lbl,$index) "$f (SVN $rev)"
         }
         die-unless "exec $cmd cat $svnopt \"$f\"" $finfo(pth,$index)
-    } elseif {[file isdirectory [file join $dirname .git]]} {
+    } elseif {[is-git-repository $dirname]} {
         set cmd "git"
         if {$::tcl_platform(platform) == "windows"} {
             append cmd ".exe"
-        }
-        # Won't work if you aren't actually in the work tree
-        debug-info "exec $cmd rev-parse --is-inside-work-tree"
-        if {[catch {eval "exec $cmd rev-parse --is-inside-work-tree"} err] } {
-           puts stderr "$err"
-           puts stderr "Please start in a git work tree."
-           exit 1
         }
         debug-info "exec $cmd rev-parse --show-prefix"
         set prefix [exec $cmd rev-parse --show-prefix]
@@ -954,6 +947,30 @@ proc get-file-rev {f index {r ""}} {
         set finfo(lbl,$index) $finfo(userlbl,$index)
         debug-info "  User label: $finfo(lbl,$index)"
     }
+}
+
+proc is-git-repository {dirname} {
+    debug-info "is-git-repository ($dirname)"
+    # check for a .git directory in all parent directories
+    set dirname [file normalize $dirname]
+    set prevdir {}
+    while {$dirname != $prevdir} {
+        set gitfilename [file join $dirname .git]
+        if {[file isdirectory $gitfilename]} {
+            set cmd "git"
+            if {$::tcl_platform(platform) == "windows"} {
+                append cmd ".exe"
+            }
+            if {[catch {eval "exec $cmd rev-parse --is-inside-work-tree"} err] } {
+                puts stderr "Found .git directory, but git commands fail."
+                return false
+            }
+            return true
+        }
+        set prevdir $dirname
+        set dirname [file dirname $dirname]
+    }
+    return false
 }
 
 proc is-mercurial-repository {dirname} {
