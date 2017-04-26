@@ -3676,9 +3676,17 @@ proc vscroll-sync {windowlist id y0 y1} {
     }
 
     # if syncing is turned on, scroll other windows.
-    # Annoyingly, sometimes the *Text windows won't scroll properly,
-    # at least under windows. And I can't for the life of me figure
-    # out why. Maybe a bug in tk?
+
+    # Ensure that all line pixel information is up-to-date.
+    # "sync" works since 8.6.6, earlier versions will use
+    # the slower "count -update -ypixels" for synchronization.
+    if {[catch { $w(RightText) sync }]} {
+        $w(RightText) count -update -ypixels 1.0 end
+    }
+    if {[catch { $w(LeftText) sync }]} {
+        $w(LeftText) count -update -ypixels 1.0 end
+    }
+
     if {$opts(syncscroll)} {
         if {$id == 1} {
 
