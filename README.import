@@ -1,0 +1,89 @@
+
+Grab the repository.  It was at r77, dated 2012-05-11 when I did this on 2016-10-05.
+
+rsync -av svn.code.sf.net::p/tkdiff/code .
+
+Create an authors file.
+
+boakley   = Bryan Oakley <bryan.oakley@gmail.com>
+dorothyr  = Dorothy Robinson
+klassa    = John Klassa <klassa@ipass.net>
+tomdunne  = Tom Dunne
+(no author) = Nobody
+
+Convert to git.
+
+mkdir tkdiff.git
+cd    tkdiff.git
+
+git svn init file:///trashcan/tkdiff/code --stdlayout --no-metadata
+git config svn.authorsfile /trashcan/tkdiff/tkdiff.git.authors
+
+git svn fetch
+
+#  Check branches.  Yup, branches exist.
+
+git branch -a
+
+#  Cleanup tags.
+
+git tag REL-3-0-0     remotes/origin/tags/REL-3-0-0
+git tag REL-3-0-1     remotes/origin/tags/REL-3-0-1
+git tag REL-3-0-2     remotes/origin/tags/REL-3-0-2
+git tag REL-3-0-3     remotes/origin/tags/REL-3-0-3
+git tag REL-3-0-9     remotes/origin/tags/REL-3-0-9
+git tag REL-4-0-0     remotes/origin/tags/REL-4-0-0
+git tag REL-4-0-1     remotes/origin/tags/REL-4-0-1
+git tag REL-4-0-2     remotes/origin/tags/REL-4-0-2
+git tag REL-4-1       remotes/origin/tags/REL-4-1
+git tag REL-4-1-1     remotes/origin/tags/REL-4-1-1
+git tag REL-4-1-2     remotes/origin/tags/REL-4-1-2
+git tag REL-4-1-3     remotes/origin/tags/REL-4-1-3
+git tag REL-4-1-4     remotes/origin/tags/REL-4-1-4
+git tag REL-4-2       remotes/origin/tags/REL-4-2
+git tag tkcvs_7_2     remotes/origin/tags/tkcvs_7_2
+git tag v4-0b1        remotes/origin/tags/v4-0b1
+git tag v4-0b2        remotes/origin/tags/v4-0b2
+git tag v4.3devel     remotes/origin/v4.3devel
+
+
+git branch -d -r origin/tags/REL-3-0-0
+git branch -d -r origin/tags/REL-3-0-1
+git branch -d -r origin/tags/REL-3-0-2
+git branch -d -r origin/tags/REL-3-0-3
+git branch -d -r origin/tags/REL-3-0-9
+git branch -d -r origin/tags/REL-4-0-0
+git branch -d -r origin/tags/REL-4-0-1
+git branch -d -r origin/tags/REL-4-0-2
+git branch -d -r origin/tags/REL-4-1
+git branch -d -r origin/tags/REL-4-1-1
+git branch -d -r origin/tags/REL-4-1-2
+git branch -d -r origin/tags/REL-4-1-3
+git branch -d -r origin/tags/REL-4-1-4
+git branch -d -r origin/tags/REL-4-2
+git branch -d -r origin/tags/tkcvs_7_2
+git branch -d -r origin/tags/v4-0b1
+git branch -d -r origin/tags/v4-0b2
+git branch -d -r origin/trunk
+git branch -d -r origin/v4.3devel
+
+#  Remove the SVN stuff.  No clue what it does; copied from some other recipe.
+
+git config --remove-section svn-remote.svn
+rm -rf .git/svn .git/logs/refs/remotes/origin/ .git/refs/remotes/origin/
+
+#  Convert the remaining branches to local branches.  Even less of a clue what it does.
+
+git config remote.origin.url .
+git config --add remote.origin.fetch +refs/remotes/\*:refs/heads/\*
+git fetch
+
+#  Covert repo into a bare repo.
+
+cd ..
+git clone --bare tkdiff.git tkdiffbare.git
+
+#  Upload that to wherever.
+
+cd tkdiffbare.git
+git push --mirror git@github.com:brianwalenz/tkdiff.git
