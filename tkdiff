@@ -7463,6 +7463,7 @@ proc ::combobox::Build {w args} {
     # now, the dropdown list... the same renaming nonsense
     # must go on here as well...
     set widgets(dropdown) [toplevel $w.top]
+    wm overrideredirect $w.top 1
     set widgets(listbox) [listbox $w.top.list]
     set widgets(vsb) [scrollbar $w.top.vsb]
 
