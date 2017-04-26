@@ -5572,6 +5572,9 @@ proc main {} {
     vscroll-sync [list $w(RightInfo) $w(LeftInfo)] 2 [lindex $yview 0] \
       [lindex $yview 1]
 
+    hscroll-sync 1 0
+    hscroll-sync 2 0
+
     wm deiconify .
     update idletasks
 
